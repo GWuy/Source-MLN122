@@ -362,7 +362,7 @@ function renderQuiz(){
       <div class="opts" role="group" aria-labelledby="qt">${Q.order.map((oi,k)=>`<button class="opt" data-k="${k}" ${q.a.length>1?'aria-pressed="false"':''}><span class="k">${L[k]}</span><span>${esc(q.o[oi])}</span></button>`).join('')}</div>
       <div class="fb" id="fb" aria-live="polite">${q.a.length>1?'<button class="btn primary" data-act="check" disabled>Kiểm tra</button>':''}</div>
     </div>
-    <div class="row qnav">${Q.i>0?'<button class="btn ghost" data-act="prev">← Câu trước</button>':''}</div>
+    <div class="row qnav"><button class="btn ghost" data-act="prev" ${Q.i>0?'':'disabled'}>← Câu trước</button><span class="muted" style="align-self:center;font-size:.85rem">Có thể quay lại xem các câu đã làm</span></div>
     <div class="hint">Phím tắt: <kbd>1</kbd>–<kbd>${q.o.length}</kbd> chọn đáp án · <kbd>Enter</kbd> kiểm tra / câu kế</div>
   </div>`;
   if(rec)showAnswer(rec);
@@ -589,6 +589,7 @@ document.addEventListener('keydown',e=>{
     if(!Q.done){const m={'1':0,'2':1,'3':2,'4':3,'5':4,a:0,b:1,c:2,d:3,e:4};const k=m[e.key.toLowerCase()];const qq=BY[Q.ids[Q.i]];
       if(k!==undefined&&k<qq.o.length){e.preventDefault();pick(k)}
       else if(e.key==='Enter'&&qq.a.length>1){e.preventDefault();check()}}
+    else if(e.key==='ArrowLeft'){e.preventDefault();prev()}
     else if(e.key==='Enter'||e.key===' '||e.key==='ArrowRight'){if(e.target.closest&&e.target.closest('button')&&e.key!=='ArrowRight')return;e.preventDefault();next()}
   }else if(mode==='flash'&&F){
     if(e.key===' '||e.key==='Enter'){if(e.target.closest&&e.target.closest('button[data-act]:not(#fc)'))return;e.preventDefault();flipCard()}
