@@ -229,10 +229,11 @@ const L='ABCDEFGH';
 const ansText=q=>q.a.length>1?q.a.map(i=>L[i]+'. '+q.o[i]).join('\n'):q.o[q.a[0]];
 /* ---------- storage ---------- */
 const KEY='mln122-ktct-v1';
-let S={learned:{},wrong:{},star:{},set:{},active:null,review:{},stats:{days:{},topic:{}}};
+let S={learned:{},wrong:{},star:{},set:{},active:null,review:{},stats:{days:{},topic:{}},mockHistory:[]};
 try{const r=localStorage.getItem(KEY);if(r)S=Object.assign(S,JSON.parse(r))}catch(e){}
 S.set=Object.assign({shuffleQ:true,shuffleOpts:true,auto:900},S.set||{});
 S.review=S.review||{};S.stats=S.stats||{days:{},topic:{}};S.stats.days=S.stats.days||{};S.stats.topic=S.stats.topic||{};
+S.mockHistory=Array.isArray(S.mockHistory)?S.mockHistory:[];
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
 const count=o=>Object.keys(o).length;
 const dayKey=(d=new Date())=>{const x=new Date(d);return x.toISOString().slice(0,10)};
@@ -240,6 +241,17 @@ function dueIds(){const now=dayKey();return QS.filter(q=>!S.review[q.id]||S.revi
 function schedule(id,quality){const r=S.review[id]||{box:0};const days=quality<=0?0:quality===1?1:quality===2?3:7;r.box=quality<=0?0:Math.min(4,(r.box||0)+(quality>=2?1:0));r.next=dayKey(Date.now()+days*86400000);r.quality=quality;S.review[id]=r}
 function recordStat(q,ok){const d=dayKey();S.stats.days[d]=S.stats.days[d]||{seen:0,right:0};S.stats.days[d].seen++;if(ok)S.stats.days[d].right++;const t=S.stats.topic[q.t]||{seen:0,right:0};t.seen++;if(ok)t.right++;S.stats.topic[q.t]=t}
 function quickIds(){const d=dueIds(),pool=shuffle(QS.map(q=>q.id).filter(id=>!d.includes(id)));return d.concat(pool).slice(0,10)}
+function mockIds(total=60){
+  const chosen=[],used=new Set();
+  TOPICS.forEach((t,i)=>{const ids=shuffle(TIDS[t.id]||[]),n=Math.floor(total/TOPICS.length)+(i<total%TOPICS.length?1:0);ids.slice(0,n).forEach(id=>{chosen.push(id);used.add(id)})});
+  if(chosen.length<total)shuffle(QS.map(q=>q.id).filter(id=>!used.has(id))).slice(0,total-chosen.length).forEach(id=>chosen.push(id));
+  return shuffle(chosen).slice(0,total);
+}
+function saveMockResult(){
+  if(!Q||Q.kind!=='mock')return;
+  const row={id:Q.mockId,date:new Date().toISOString(),score:Q.right,total:Q.ids.length,wrong:Q.wrong.slice()};
+  S.mockHistory=[row,...S.mockHistory.filter(x=>x.id!==row.id)].slice(0,12);save();
+}
 
 /* ---------- state ---------- */
 let tab='chu-de', mode=null, Q=null, F=null, kbTopic=TOPICS[0].id, kbQuery='', wrongTopic='all';
@@ -275,6 +287,7 @@ function homeHTML(){
   const due=dueIds(), today=S.stats.days[dayKey()]||{seen:0,right:0};
   let streak=0,sd=new Date();while(S.stats.days[dayKey(sd)]){streak++;sd.setDate(sd.getDate()-1)}
   const weak=TOPICS.map(t=>{const s=S.stats.topic[t.id]||{seen:0,right:0};return {...t,p:s.seen?Math.round(s.right/s.seen*100):0,seen:s.seen}}).filter(t=>t.seen).sort((a,b)=>a.p-b.p)[0];
+  const mh=S.mockHistory.slice(0,5);
   const cards=TOPICS.map(t=>{
     const ids=TIDS[t.id], l=ids.filter(i=>S.learned[i]).length, p=Math.round(l/ids.length*100);
     return `<article class="card topic">
@@ -300,11 +313,12 @@ function homeHTML(){
     ${S.active?`<button class="btn primary" data-act="resume">Tiếp tục phiên học dang dở</button>`:''}
     <button class="btn primary" data-act="due" ${due.length?'':'disabled'}>Ôn ${due.length} câu đến hạn</button>
     <button class="btn" data-act="quick">Học nhanh 10 câu</button>
-    <button class="btn primary" data-act="mix">Thi thử 40 câu ngẫu nhiên</button>
+    <button class="btn primary" data-act="mix">Thi thử 60 câu tổng hợp</button>
     <button class="btn" data-act="all">Làm tất cả ${total} câu</button>
     <button class="btn" data-act="wrongs" ${nw?'':'disabled'}>Ôn ${nw} câu sai</button>
     <button class="btn" data-act="starred" ${ns?'':'disabled'}>Câu gắn sao (${ns})</button>
   </div>
+  ${mh.length?`<section class="card settings"><h3>Lịch sử thi thử</h3>${mh.map(x=>`<div class="row" style="justify-content:space-between;align-items:center;border-bottom:1px solid var(--line);padding:8px 0"><span>${new Date(x.date).toLocaleString('vi-VN')} · <strong>${x.score}/${x.total} điểm</strong></span><span class="muted">${x.wrong.length} câu sai</span></div>`).join('')}</section>`:''}
   <div class="grid">${cards}</div>
   <section class="card settings" aria-label="Cài đặt học">
     <h3>Cài đặt học</h3>
@@ -321,16 +335,16 @@ function homeHTML(){
 function fixedOrder(q){
   return q.o.some(o=>/tất cả|các phương án|cả ba|cả hai|đều đúng|đều sai|không có phương án|^[A-E]\s*(và|,)\s*[A-E]\b|^\d/i.test(o.trim()));
 }
-function startQuiz(ids,title,round,hist,origin){
+function startQuiz(ids,title,round,hist,origin,kind,mockId){
   if(!ids.length)return;
   const orig=origin||ids.slice();
   ids=S.set.shuffleQ?shuffle(ids):ids.slice().sort((a,b)=>a-b);
-  Q={ids,i:0,title,round:round||1,hist:hist||[],wrong:[],right:0,done:false,timer:null,origin:orig,answers:{},orders:{}};
+  Q={ids,i:0,title,round:round||1,hist:hist||[],wrong:[],right:0,done:false,timer:null,origin:orig,answers:{},orders:{},kind:kind||null,mockId:mockId||((kind==='mock')?Date.now():null)};
   mode='quiz';persistQuiz();render();window.scrollTo(0,0);
 }
 function persistQuiz(){
   if(!Q||mode!=='quiz')return;
-  S.active={ids:Q.ids.slice(),i:Q.i,title:Q.title,round:Q.round,hist:Q.hist,wrong:Q.wrong.slice(),right:Q.right,origin:Q.origin.slice(),answers:Q.answers,orders:Q.orders};
+  S.active={ids:Q.ids.slice(),i:Q.i,title:Q.title,round:Q.round,hist:Q.hist,wrong:Q.wrong.slice(),right:Q.right,origin:Q.origin.slice(),answers:Q.answers,orders:Q.orders,kind:Q.kind,mockId:Q.mockId};
   save();
 }
 function resumeQuiz(){
@@ -338,7 +352,7 @@ function resumeQuiz(){
   if(!a||!a.ids||!a.ids.length)return;
   const valid=a.ids.every(id=>BY[id]);
   if(!valid){S.active=null;save();render();return}
-  Q={ids:a.ids.slice(),i:Math.min(a.i||0,a.ids.length-1),title:a.title||'Phiên học',round:a.round||1,hist:a.hist||[],wrong:a.wrong||[],right:a.right||0,done:false,timer:null,origin:a.origin||a.ids.slice(),answers:a.answers||{},orders:a.orders||{}};
+  Q={ids:a.ids.slice(),i:Math.min(a.i||0,a.ids.length-1),title:a.title||'Phiên học',round:a.round||1,hist:a.hist||[],wrong:a.wrong||[],right:a.right||0,done:false,timer:null,origin:a.origin||a.ids.slice(),answers:a.answers||{},orders:a.orders||{},kind:a.kind||null,mockId:a.mockId||null};
   mode='quiz';render();window.scrollTo(0,0);
 }
 function renderQuiz(){
@@ -418,7 +432,7 @@ function next(){
   if(!Q)return;clearTimeout(Q.timer);
   if(!Q.done)return;
   Q.i++;
-  if(Q.i>=Q.ids.length){Q.hist=Q.hist.concat([{round:Q.round,right:Q.right,total:Q.ids.length}]);S.active=null;save();mode='qresult';render();window.scrollTo(0,0)}
+  if(Q.i>=Q.ids.length){Q.hist=Q.hist.concat([{round:Q.round,right:Q.right,total:Q.ids.length}]);saveMockResult();S.active=null;save();mode='qresult';render();window.scrollTo(0,0)}
   else renderQuiz();
 }
 function prev(){
@@ -548,7 +562,7 @@ document.addEventListener('click',e=>{
     case 'resume':resumeQuiz();break;
     case 'due':startQuiz(dueIds().slice(0,40),'Ôn tập đến hạn');break;
     case 'quick':startQuiz(quickIds(),'Học nhanh 10 câu');break;
-    case 'mix':startQuiz(shuffle(QS.map(q=>q.id)).slice(0,40),'Thi thử 40 câu');break;
+    case 'mix':startQuiz(mockIds(60),'Thi thử 60 câu tổng hợp',1,[],null,'mock');break;
     case 'all':startQuiz(QS.map(q=>q.id),'Tất cả câu hỏi');break;
     case 'wrongs':startQuiz(Object.keys(S.wrong).map(Number).filter(i=>BY[i]),'Ôn câu sai');break;
     case 'starred':startQuiz(Object.keys(S.star).map(Number).filter(i=>BY[i]),'Câu gắn sao');break;
@@ -557,8 +571,8 @@ document.addEventListener('click',e=>{
     case 'prev':prev();break;
     case 'check':check();break;
     case 'confidence':{const id=+el.dataset.id;schedule(id,+el.dataset.q);save();el.parentElement.querySelectorAll('button').forEach(b=>b.classList.remove('primary'));el.classList.add('primary');break}
-    case 'retry':startQuiz(Q.wrong.slice(),Q.title,Q.round+1,Q.hist,Q.origin);break;
-    case 'restart':startQuiz(Q.origin.slice(),Q.title,1,[]);break;
+    case 'retry':startQuiz(Q.wrong.slice(),Q.title,Q.round+1,Q.hist,Q.origin,Q.kind,Q.mockId);break;
+    case 'restart':startQuiz(Q.origin.slice(),Q.title,1,[],null,Q.kind);break;
     case 'star':{const id=+el.dataset.id;if(S.star[id])delete S.star[id];else S.star[id]=1;save();el.setAttribute('aria-pressed',!!S.star[id]);el.textContent=S.star[id]?'★':'☆';break}
     case 'flip':flipCard();break;
     case 'fyes':flashMark(true);break;
@@ -580,7 +594,7 @@ let resetArm=0;
 document.addEventListener('click',e=>{
   const r=e.target.closest('#reset');if(!r)return;
   if(!resetArm){r.textContent='Bấm lần nữa để xóa hết tiến độ';resetArm=setTimeout(()=>{resetArm=0;r.textContent='Xóa tiến độ'},4000)}
-  else{clearTimeout(resetArm);resetArm=0;S.learned={};S.wrong={};S.star={};S.active=null;S.review={};S.stats={days:{},topic:{}};save();render()}
+  else{clearTimeout(resetArm);resetArm=0;S.learned={};S.wrong={};S.star={};S.active=null;S.review={};S.stats={days:{},topic:{}};S.mockHistory=[];save();render()}
 });
 document.addEventListener('keydown',e=>{
   if(e.target.matches&&e.target.matches('input,select,textarea'))return;
