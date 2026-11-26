@@ -228,7 +228,7 @@ const L='ABCDEFGH';
 const ansText=q=>q.a.length>1?q.a.map(i=>L[i]+'. '+q.o[i]).join('\n'):q.o[q.a[0]];
 /* ---------- storage ---------- */
 const KEY='mln122-ktct-v1';
-let S={learned:{},wrong:{},star:{},set:{}};
+let S={learned:{},wrong:{},star:{},set:{},active:null};
 try{const r=localStorage.getItem(KEY);if(r)S=Object.assign(S,JSON.parse(r))}catch(e){}
 S.set=Object.assign({shuffleQ:true,shuffleOpts:true,auto:900},S.set||{});
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
@@ -283,6 +283,7 @@ function homeHTML(){
       <small>${nw} câu đang sai · ${ns} câu gắn sao</small></div>
   </section>
   <div class="row actions">
+    ${S.active?`<button class="btn primary" data-act="resume">Tiếp tục phiên học dang dở</button>`:''}
     <button class="btn primary" data-act="mix">Thi thử 40 câu ngẫu nhiên</button>
     <button class="btn" data-act="all">Làm tất cả ${total} câu</button>
     <button class="btn" data-act="wrongs" ${nw?'':'disabled'}>Ôn ${nw} câu sai</button>
@@ -307,14 +308,30 @@ function startQuiz(ids,title,round,hist,origin){
   if(!ids.length)return;
   const orig=origin||ids.slice();
   ids=S.set.shuffleQ?shuffle(ids):ids.slice().sort((a,b)=>a-b);
-  Q={ids,i:0,title,round:round||1,hist:hist||[],wrong:[],right:0,done:false,timer:null,origin:orig};
+  Q={ids,i:0,title,round:round||1,hist:hist||[],wrong:[],right:0,done:false,timer:null,origin:orig,answers:{},orders:{}};
+  mode='quiz';persistQuiz();render();window.scrollTo(0,0);
+}
+function persistQuiz(){
+  if(!Q||mode!=='quiz')return;
+  S.active={ids:Q.ids.slice(),i:Q.i,title:Q.title,round:Q.round,hist:Q.hist,wrong:Q.wrong.slice(),right:Q.right,origin:Q.origin.slice(),answers:Q.answers,orders:Q.orders};
+  save();
+}
+function resumeQuiz(){
+  const a=S.active;
+  if(!a||!a.ids||!a.ids.length)return;
+  const valid=a.ids.every(id=>BY[id]);
+  if(!valid){S.active=null;save();render();return}
+  Q={ids:a.ids.slice(),i:Math.min(a.i||0,a.ids.length-1),title:a.title||'Phiên học',round:a.round||1,hist:a.hist||[],wrong:a.wrong||[],right:a.right||0,done:false,timer:null,origin:a.origin||a.ids.slice(),answers:a.answers||{},orders:a.orders||{}};
   mode='quiz';render();window.scrollTo(0,0);
 }
 function renderQuiz(){
   const q=BY[Q.ids[Q.i]];
   const idxs=q.o.map((_,i)=>i);
-  Q.order=(S.set.shuffleOpts&&!fixedOrder(q))?shuffle(idxs):idxs;
-  Q.done=false;Q.sel=new Set();clearTimeout(Q.timer);
+  Q.orders=Q.orders||{};
+  Q.order=Q.orders[q.id]||(S.set.shuffleOpts&&!fixedOrder(q)?shuffle(idxs):idxs);
+  Q.orders[q.id]=Q.order.slice();
+  const rec=Q.answers&&Q.answers[q.id];
+  Q.done=!!rec;Q.sel=new Set();clearTimeout(Q.timer);
   const total=Q.ids.length, pct=Math.round(Q.i/total*100);
   $('#app').innerHTML=`<div class="study">
     <div class="sbar"><button class="btn ghost" data-act="exit">← Thoát</button>
@@ -328,8 +345,19 @@ function renderQuiz(){
       <div class="opts" role="group" aria-labelledby="qt">${Q.order.map((oi,k)=>`<button class="opt" data-k="${k}" ${q.a.length>1?'aria-pressed="false"':''}><span class="k">${L[k]}</span><span>${esc(q.o[oi])}</span></button>`).join('')}</div>
       <div class="fb" id="fb" aria-live="polite">${q.a.length>1?'<button class="btn primary" data-act="check" disabled>Kiểm tra</button>':''}</div>
     </div>
+    <div class="row qnav">${Q.i>0?'<button class="btn ghost" data-act="prev">← Câu trước</button>':''}</div>
     <div class="hint">Phím tắt: <kbd>1</kbd>–<kbd>${q.o.length}</kbd> chọn đáp án · <kbd>Enter</kbd> kiểm tra / câu kế</div>
   </div>`;
+  if(rec)showAnswer(rec);
+  else persistQuiz();
+}
+function showAnswer(rec){
+  const q=BY[Q.ids[Q.i]],corr=new Set(q.a),chosen=new Set(rec.chosen||[]);
+  document.querySelectorAll('.opt').forEach((b,j)=>{const oi=Q.order[j];b.disabled=true;
+    if(corr.has(oi))b.classList.add('good');else if(chosen.has(oi))b.classList.add('bad');else b.classList.add('dim')});
+  const letters=q.a.map(i=>L[Q.order.indexOf(i)]).sort().join(', ');
+  const note=q.n?`<div class="muted" style="font-size:.85rem;width:100%">Ghi chú trong note: ${esc(q.n)}</div>`:'';
+  $('#fb').innerHTML=`<span class="msg ${rec.ok?'good':'bad'}">${rec.ok?'Chính xác.':'Chưa đúng. Đáp án là '+letters+'.'}</span><button class="btn primary" data-act="next">Tiếp</button>${note}`;
 }
 function pick(k){
   if(!Q||Q.done)return;
@@ -344,8 +372,11 @@ function pick(k){
 function check(){if(!Q||Q.done||!Q.sel.size)return;finish(new Set([...Q.sel].map(k=>Q.order[k])))}
 function finish(chosen){
   const q=BY[Q.ids[Q.i]],corr=new Set(q.a);
+  if(Q.answers&&Q.answers[q.id])return;
   const ok=chosen.size===corr.size&&[...chosen].every(i=>corr.has(i));
   Q.done=true;
+  Q.answers=Q.answers||{};
+  Q.answers[q.id]={order:Q.order.slice(),chosen:[...chosen],ok};
   document.querySelectorAll('.opt').forEach((b,j)=>{const oi=Q.order[j];b.disabled=true;b.classList.remove('sel');
     if(corr.has(oi))b.classList.add('good');else if(chosen.has(oi))b.classList.add('bad');else b.classList.add('dim')});
   const fb=$('#fb');
@@ -362,15 +393,19 @@ function finish(chosen){
     Q.wrong.push(q.id);S.wrong[q.id]=1;delete S.learned[q.id];
     fb.innerHTML=`<span class="msg bad">Chưa đúng. Đáp án là ${letters}.</span><button class="btn primary" data-act="next">Tiếp</button>${note}`;
   }
-  save();renderNav();
+  persistQuiz();renderNav();
   const nb=fb.querySelector('[data-act="next"]');if(!ok&&nb)nb.focus({preventScroll:true});
 }
 function next(){
   if(!Q)return;clearTimeout(Q.timer);
   if(!Q.done)return;
   Q.i++;
-  if(Q.i>=Q.ids.length){Q.hist=Q.hist.concat([{round:Q.round,right:Q.right,total:Q.ids.length}]);mode='qresult';render();window.scrollTo(0,0)}
+  if(Q.i>=Q.ids.length){Q.hist=Q.hist.concat([{round:Q.round,right:Q.right,total:Q.ids.length}]);S.active=null;save();mode='qresult';render();window.scrollTo(0,0)}
   else renderQuiz();
+}
+function prev(){
+  if(!Q||Q.i<=0)return;
+  clearTimeout(Q.timer);Q.i--;renderQuiz();window.scrollTo(0,0);
 }
 function renderQResult(){
   const total=Q.ids.length,right=Q.right,w=Q.wrong,perfect=!w.length;
@@ -495,12 +530,14 @@ document.addEventListener('click',e=>{
     case 'kb':kbTopic=t;kbQuery='';setTab('tong-hop');break;
     case 'kbtopic':kbTopic=t;kbQuery='';render();break;
     case 'tab':setTab(t);break;
+    case 'resume':resumeQuiz();break;
     case 'mix':startQuiz(shuffle(QS.map(q=>q.id)).slice(0,40),'Thi thử 40 câu');break;
     case 'all':startQuiz(QS.map(q=>q.id),'Tất cả câu hỏi');break;
     case 'wrongs':startQuiz(Object.keys(S.wrong).map(Number).filter(i=>BY[i]),'Ôn câu sai');break;
     case 'starred':startQuiz(Object.keys(S.star).map(Number).filter(i=>BY[i]),'Câu gắn sao');break;
     case 'exit':mode=null;clearTimeout(Q&&Q.timer);Q=null;F=null;render();window.scrollTo(0,0);break;
     case 'next':next();break;
+    case 'prev':prev();break;
     case 'check':check();break;
     case 'retry':startQuiz(Q.wrong.slice(),Q.title,Q.round+1,Q.hist,Q.origin);break;
     case 'restart':startQuiz(Q.origin.slice(),Q.title,1,[]);break;
@@ -524,7 +561,7 @@ let resetArm=0;
 document.addEventListener('click',e=>{
   const r=e.target.closest('#reset');if(!r)return;
   if(!resetArm){r.textContent='Bấm lần nữa để xóa hết tiến độ';resetArm=setTimeout(()=>{resetArm=0;r.textContent='Xóa tiến độ'},4000)}
-  else{clearTimeout(resetArm);resetArm=0;S.learned={};S.wrong={};S.star={};save();render()}
+  else{clearTimeout(resetArm);resetArm=0;S.learned={};S.wrong={};S.star={};S.active=null;save();render()}
 });
 document.addEventListener('keydown',e=>{
   if(e.target.matches&&e.target.matches('input,select,textarea'))return;
