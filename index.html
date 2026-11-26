@@ -80,6 +80,7 @@ strong{font-weight:600}
 .settings label{display:flex;align-items:center;gap:10px;font-size:.95rem}
 .settings input[type=checkbox]{width:18px;height:18px;accent-color:var(--accent)}
 .settings select{font:inherit;color:var(--ink);background:var(--surface2);border:1px solid var(--line);border-radius:8px;padding:6px 10px}
+.today{padding:18px;margin:0 0 22px}.today h2{font-family:var(--font-display);font-size:1.35rem}.today .metric{padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--surface2);min-width:125px}.today .metric b{display:block;font-family:var(--font-display);font-size:1.5rem;line-height:1.1}.today .metric span{font-size:.8rem;color:var(--muted)}.confidence{display:flex;gap:6px;flex-wrap:wrap;width:100%;margin-top:4px}.confidence button{font-size:.8rem;padding:5px 9px}.weak{margin-top:10px;font-size:.88rem;color:var(--muted)}
 
 /* study frame */
 .study{max-width:720px;margin:6px auto 0}
@@ -228,14 +229,20 @@ const L='ABCDEFGH';
 const ansText=q=>q.a.length>1?q.a.map(i=>L[i]+'. '+q.o[i]).join('\n'):q.o[q.a[0]];
 /* ---------- storage ---------- */
 const KEY='mln122-ktct-v1';
-let S={learned:{},wrong:{},star:{},set:{},active:null};
+let S={learned:{},wrong:{},star:{},set:{},active:null,review:{},stats:{days:{},topic:{}}};
 try{const r=localStorage.getItem(KEY);if(r)S=Object.assign(S,JSON.parse(r))}catch(e){}
 S.set=Object.assign({shuffleQ:true,shuffleOpts:true,auto:900},S.set||{});
+S.review=S.review||{};S.stats=S.stats||{days:{},topic:{}};S.stats.days=S.stats.days||{};S.stats.topic=S.stats.topic||{};
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
 const count=o=>Object.keys(o).length;
+const dayKey=(d=new Date())=>{const x=new Date(d);return x.toISOString().slice(0,10)};
+function dueIds(){const now=dayKey();return QS.filter(q=>!S.review[q.id]||S.review[q.id].next<=now).map(q=>q.id)}
+function schedule(id,quality){const r=S.review[id]||{box:0};const days=quality<=0?0:quality===1?1:quality===2?3:7;r.box=quality<=0?0:Math.min(4,(r.box||0)+(quality>=2?1:0));r.next=dayKey(Date.now()+days*86400000);r.quality=quality;S.review[id]=r}
+function recordStat(q,ok){const d=dayKey();S.stats.days[d]=S.stats.days[d]||{seen:0,right:0};S.stats.days[d].seen++;if(ok)S.stats.days[d].right++;const t=S.stats.topic[q.t]||{seen:0,right:0};t.seen++;if(ok)t.right++;S.stats.topic[q.t]=t}
+function quickIds(){const d=dueIds(),pool=shuffle(QS.map(q=>q.id).filter(id=>!d.includes(id)));return d.concat(pool).slice(0,10)}
 
 /* ---------- state ---------- */
-let tab='chu-de', mode=null, Q=null, F=null, kbTopic=TOPICS[0].id, kbQuery='';
+let tab='chu-de', mode=null, Q=null, F=null, kbTopic=TOPICS[0].id, kbQuery='', wrongTopic='all';
 const TABS=[['chu-de','Chủ đề'],['tong-hop','Tổng hợp'],['meo','Mẹo'],['cau-sai','Câu sai']];
 
 function setTab(t){tab=t;mode=null;clearTimeout(Q&&Q.timer);Q=null;F=null;
@@ -265,6 +272,9 @@ function render(){
 function homeHTML(){
   const total=QS.length, learned=count(S.learned), nw=count(S.wrong), ns=count(S.star);
   const pct=Math.round(learned/total*100);
+  const due=dueIds(), today=S.stats.days[dayKey()]||{seen:0,right:0};
+  let streak=0,sd=new Date();while(S.stats.days[dayKey(sd)]){streak++;sd.setDate(sd.getDate()-1)}
+  const weak=TOPICS.map(t=>{const s=S.stats.topic[t.id]||{seen:0,right:0};return {...t,p:s.seen?Math.round(s.right/s.seen*100):0,seen:s.seen}}).filter(t=>t.seen).sort((a,b)=>a.p-b.p)[0];
   const cards=TOPICS.map(t=>{
     const ids=TIDS[t.id], l=ids.filter(i=>S.learned[i]).length, p=Math.round(l/ids.length*100);
     return `<article class="card topic">
@@ -282,8 +292,14 @@ function homeHTML(){
       <div class="bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="Tiến độ tổng"><i style="width:${pct}%"></i></div>
       <small>${nw} câu đang sai · ${ns} câu gắn sao</small></div>
   </section>
+  <section class="card today"><h2>Hôm nay nên học gì?</h2><p class="muted" style="margin:4px 0 12px">Ôn câu đến hạn trước, sau đó luyện thêm câu mới để nhớ lâu hơn.</p>
+    <div class="row"><div class="metric"><b>${due.length}</b><span>Câu đến hạn ôn</span></div><div class="metric"><b>${today.seen}</b><span>Câu đã làm hôm nay</span></div><div class="metric"><b>${today.seen?Math.round(today.right/today.seen*100):0}%</b><span>Tỷ lệ đúng hôm nay</span></div><div class="metric"><b>${streak}</b><span>Ngày học liên tiếp</span></div></div>
+    ${weak?`<div class="weak">Chủ đề cần củng cố: <strong>${esc(weak.name)}</strong> · đúng ${weak.p}%</div>`:''}
+  </section>
   <div class="row actions">
     ${S.active?`<button class="btn primary" data-act="resume">Tiếp tục phiên học dang dở</button>`:''}
+    <button class="btn primary" data-act="due" ${due.length?'':'disabled'}>Ôn ${due.length} câu đến hạn</button>
+    <button class="btn" data-act="quick">Học nhanh 10 câu</button>
     <button class="btn primary" data-act="mix">Thi thử 40 câu ngẫu nhiên</button>
     <button class="btn" data-act="all">Làm tất cả ${total} câu</button>
     <button class="btn" data-act="wrongs" ${nw?'':'disabled'}>Ôn ${nw} câu sai</button>
@@ -294,6 +310,7 @@ function homeHTML(){
     <h3>Cài đặt học</h3>
     <label><input type="checkbox" id="s-q" ${s.shuffleQ?'checked':''}> Trộn thứ tự câu hỏi</label>
     <label><input type="checkbox" id="s-o" ${s.shuffleOpts?'checked':''}> Trộn vị trí đáp án (câu có "Tất cả đều đúng", "A và B" hoặc đáp án bắt đầu bằng số giữ nguyên)</label>
+    <label><input type="checkbox" id="s-f" ${s.reverseFlash?'checked':''}> Đảo chiều flashcard (hiện đáp án trước, tự nhớ lại câu hỏi)</label>
     <label>Tự chuyển câu sau khi đúng
       <select id="s-a"><option value="600" ${s.auto==600?'selected':''}>Nhanh (0,6 giây)</option><option value="900" ${s.auto==900?'selected':''}>Vừa (0,9 giây)</option><option value="1500" ${s.auto==1500?'selected':''}>Chậm (1,5 giây)</option><option value="0" ${s.auto==0?'selected':''}>Tắt, tự bấm Tiếp</option></select></label>
     <div><button class="btn ghost" id="reset">Xóa tiến độ</button></div>
@@ -357,7 +374,7 @@ function showAnswer(rec){
     if(corr.has(oi))b.classList.add('good');else if(chosen.has(oi))b.classList.add('bad');else b.classList.add('dim')});
   const letters=q.a.map(i=>L[Q.order.indexOf(i)]).sort().join(', ');
   const note=q.n?`<div class="muted" style="font-size:.85rem;width:100%">Ghi chú trong note: ${esc(q.n)}</div>`:'';
-  $('#fb').innerHTML=`<span class="msg ${rec.ok?'good':'bad'}">${rec.ok?'Chính xác.':'Chưa đúng. Đáp án là '+letters+'.'}</span><button class="btn primary" data-act="next">Tiếp</button>${note}`;
+  $('#fb').innerHTML=`<span class="msg ${rec.ok?'good':'bad'}">${rec.ok?'Chính xác.':'Chưa đúng. Đáp án là '+letters+'.'}</span><button class="btn primary" data-act="next">Tiếp</button>${note}<div class="confidence"><span class="muted">Mức độ nhớ:</span><button class="btn" data-act="confidence" data-id="${q.id}" data-q="0">Quên</button><button class="btn" data-act="confidence" data-id="${q.id}" data-q="1">Chưa chắc</button><button class="btn" data-act="confidence" data-id="${q.id}" data-q="2">Nhớ tốt</button></div>`;
 }
 function pick(k){
   if(!Q||Q.done)return;
@@ -377,6 +394,7 @@ function finish(chosen){
   Q.done=true;
   Q.answers=Q.answers||{};
   Q.answers[q.id]={order:Q.order.slice(),chosen:[...chosen],ok};
+  schedule(q.id,ok?2:0);recordStat(q,ok);
   document.querySelectorAll('.opt').forEach((b,j)=>{const oi=Q.order[j];b.disabled=true;b.classList.remove('sel');
     if(corr.has(oi))b.classList.add('good');else if(chosen.has(oi))b.classList.add('bad');else b.classList.add('dim')});
   const fb=$('#fb');
@@ -385,13 +403,13 @@ function finish(chosen){
   if(ok){
     Q.right++;S.learned[q.id]=1;delete S.wrong[q.id];
     if(S.set.auto>0&&!q.n){
-      fb.innerHTML=`<span class="msg good">Chính xác. Đang sang câu kế…</span><button class="btn" data-act="next">Tiếp</button>`;
+    fb.innerHTML=`<span class="msg good">Chính xác. Đang sang câu kế…</span><button class="btn" data-act="next">Tiếp</button><div class="confidence"><span class="muted">Mức độ nhớ:</span><button class="btn" data-act="confidence" data-id="${q.id}" data-q="0">Quên</button><button class="btn" data-act="confidence" data-id="${q.id}" data-q="1">Chưa chắc</button><button class="btn" data-act="confidence" data-id="${q.id}" data-q="2">Nhớ tốt</button></div>`;
       fb.insertAdjacentHTML('afterend',`<div class="auto" style="--ms:${S.set.auto}ms"><i></i></div>`);
       Q.timer=setTimeout(next,S.set.auto);
-    }else fb.innerHTML=`<span class="msg good">Chính xác.</span><button class="btn primary" data-act="next">Tiếp</button>${note}`;
+    }else fb.innerHTML=`<span class="msg good">Chính xác.</span><button class="btn primary" data-act="next">Tiếp</button>${note}<div class="confidence"><span class="muted">Mức độ nhớ:</span><button class="btn" data-act="confidence" data-id="${q.id}" data-q="0">Quên</button><button class="btn" data-act="confidence" data-id="${q.id}" data-q="1">Chưa chắc</button><button class="btn" data-act="confidence" data-id="${q.id}" data-q="2">Nhớ tốt</button></div>`;
   }else{
     Q.wrong.push(q.id);S.wrong[q.id]=1;delete S.learned[q.id];
-    fb.innerHTML=`<span class="msg bad">Chưa đúng. Đáp án là ${letters}.</span><button class="btn primary" data-act="next">Tiếp</button>${note}`;
+    fb.innerHTML=`<span class="msg bad">Chưa đúng. Đáp án là ${letters}.</span><button class="btn primary" data-act="next">Tiếp</button>${note}<div class="confidence"><span class="muted">Mức độ nhớ:</span><button class="btn" data-act="confidence" data-id="${q.id}" data-q="0">Quên</button><button class="btn" data-act="confidence" data-id="${q.id}" data-q="1">Chưa chắc</button><button class="btn" data-act="confidence" data-id="${q.id}" data-q="2">Nhớ tốt</button></div>`;
   }
   persistQuiz();renderNav();
   const nb=fb.querySelector('[data-act="next"]');if(!ok&&nb)nb.focus({preventScroll:true});
@@ -425,26 +443,23 @@ function renderQResult(){
 /* ---------- flashcards ---------- */
 function startFlash(ids,title,topic){
   ids=S.set.shuffleQ?shuffle(ids):ids.slice().sort((a,b)=>a-b);
-  F={ids,i:0,flip:false,unknown:[],known:0,title,topic:topic||null};
+  F={ids,i:0,flip:false,unknown:[],known:0,title,topic:topic||null,reverse:!!S.set.reverseFlash};
   mode='flash';render();window.scrollTo(0,0);
 }
 function renderFlash(){
   const q=BY[F.ids[F.i]],total=F.ids.length,pct=Math.round(F.i/total*100);
+  const front=F.reverse?`<div class="lab">Đáp án cần nhớ · ${esc(TNAME[q.t])}</div><div class="ans">${esc(ansText(q))}</div><div class="lab">Tự nói lại câu hỏi rồi bấm để xem</div>`:`<div class="lab">Câu hỏi · ${esc(TNAME[q.t])}</div>${q.a.length>1?`<div><span class="mbadge">☑ Chọn ${q.a.length} đáp án</span></div>`:''}<div class="ans" style="font-size:clamp(1.15rem,3.2vw,1.45rem)">${esc(q.q)}</div><ol class="olist" style="list-style:none">${q.o.map((o,j)=>`<li><b>${L[j]}</b><span>${esc(o)}</span></li>`).join('')}</ol>`;
+  const back=F.reverse?`<div class="lab">Câu hỏi</div><div class="ans" style="font-size:clamp(1.15rem,3.2vw,1.45rem)">${esc(q.q)}</div><div class="olist"><b>Đáp án đúng: ${esc(ansText(q))}</b></div>`:`<div class="lab">Đáp án đúng</div><div class="muted" style="font-size:.9rem;white-space:pre-line;overflow-wrap:anywhere">${esc(q.q)}</div><div class="ans">${esc(ansText(q))}<small>Đáp án ${q.a.map(i=>L[i]).join(", ")} trong note</small></div>`;
   $('#app').innerHTML=`<div class="study">
     <div class="sbar"><button class="btn ghost" data-act="exit">← Thoát</button><div class="ttl">${esc(F.title)} · Flashcard</div>
       <div class="stat"><span>Thẻ ${F.i+1}/${total}</span><span class="g">Thuộc ${F.known}</span><span class="b">Chưa ${F.unknown.length}</span></div></div>
     <div class="bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><i style="width:${pct}%"></i></div>
     <div class="scene"><div class="fcard${F.flip?' flipped':''}" id="fc" data-act="flip" role="button" tabindex="0" aria-label="Lật thẻ">
       <div class="face front card" aria-hidden="${F.flip}">
-        <div class="lab">Câu hỏi · ${esc(TNAME[q.t])}</div>
-        ${q.a.length>1?`<div><span class="mbadge">☑ Chọn ${q.a.length} đáp án</span></div>`:''}
-        <div class="ans" style="font-size:clamp(1.15rem,3.2vw,1.45rem)">${esc(q.q)}</div>
-        <ol class="olist" style="list-style:none">${q.o.map((o,j)=>`<li><b>${L[j]}</b><span>${esc(o)}</span></li>`).join('')}</ol>
+        ${front}
         <div class="lab">Bấm hoặc nhấn Space để lật</div></div>
       <div class="face back card" aria-hidden="${!F.flip}">
-        <div class="lab">Đáp án đúng</div>
-        <div class="muted" style="font-size:.9rem;white-space:pre-line;overflow-wrap:anywhere">${esc(q.q)}</div>
-        <div class="ans">${esc(ansText(q))}<small>Đáp án ${q.a.map(i=>L[i]).join(", ")} trong note</small></div></div>
+        ${back}</div>
     </div></div>
     <div class="fact"><button class="btn no" data-act="fno">← Chưa thuộc</button><button class="btn yes" data-act="fyes">Đã thuộc →</button></div>
     <div class="hint"><kbd>Space</kbd> lật · <kbd>←</kbd> chưa thuộc · <kbd>→</kbd> đã thuộc</div>
@@ -531,6 +546,8 @@ document.addEventListener('click',e=>{
     case 'kbtopic':kbTopic=t;kbQuery='';render();break;
     case 'tab':setTab(t);break;
     case 'resume':resumeQuiz();break;
+    case 'due':startQuiz(dueIds().slice(0,40),'Ôn tập đến hạn');break;
+    case 'quick':startQuiz(quickIds(),'Học nhanh 10 câu');break;
     case 'mix':startQuiz(shuffle(QS.map(q=>q.id)).slice(0,40),'Thi thử 40 câu');break;
     case 'all':startQuiz(QS.map(q=>q.id),'Tất cả câu hỏi');break;
     case 'wrongs':startQuiz(Object.keys(S.wrong).map(Number).filter(i=>BY[i]),'Ôn câu sai');break;
@@ -539,6 +556,7 @@ document.addEventListener('click',e=>{
     case 'next':next();break;
     case 'prev':prev();break;
     case 'check':check();break;
+    case 'confidence':{const id=+el.dataset.id;schedule(id,+el.dataset.q);save();el.parentElement.querySelectorAll('button').forEach(b=>b.classList.remove('primary'));el.classList.add('primary');break}
     case 'retry':startQuiz(Q.wrong.slice(),Q.title,Q.round+1,Q.hist,Q.origin);break;
     case 'restart':startQuiz(Q.origin.slice(),Q.title,1,[]);break;
     case 'star':{const id=+el.dataset.id;if(S.star[id])delete S.star[id];else S.star[id]=1;save();el.setAttribute('aria-pressed',!!S.star[id]);el.textContent=S.star[id]?'★':'☆';break}
@@ -555,13 +573,14 @@ document.addEventListener('input',e=>{
 document.addEventListener('change',e=>{
   if(e.target.id==='s-q'){S.set.shuffleQ=e.target.checked;save()}
   if(e.target.id==='s-o'){S.set.shuffleOpts=e.target.checked;save()}
+  if(e.target.id==='s-f'){S.set.reverseFlash=e.target.checked;save()}
   if(e.target.id==='s-a'){S.set.auto=+e.target.value;save()}
 });
 let resetArm=0;
 document.addEventListener('click',e=>{
   const r=e.target.closest('#reset');if(!r)return;
   if(!resetArm){r.textContent='Bấm lần nữa để xóa hết tiến độ';resetArm=setTimeout(()=>{resetArm=0;r.textContent='Xóa tiến độ'},4000)}
-  else{clearTimeout(resetArm);resetArm=0;S.learned={};S.wrong={};S.star={};S.active=null;save();render()}
+  else{clearTimeout(resetArm);resetArm=0;S.learned={};S.wrong={};S.star={};S.active=null;S.review={};S.stats={days:{},topic:{}};save();render()}
 });
 document.addEventListener('keydown',e=>{
   if(e.target.matches&&e.target.matches('input,select,textarea'))return;
